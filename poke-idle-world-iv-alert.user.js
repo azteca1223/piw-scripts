@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Poke Idle World - Alerta IV Alto
 // @namespace    https://github.com/es6te/
-// @version      1.3
-// @description  Avisa con sonido cuando CAPTURAS IV >= umbral (ignora vistos/escapados)
+// @version      1.6
+// @description  Solo MIS capturas: nombre + IV/192 + rareza con multi EXACTO
 // @author       azteca1223
 // @match        https://poke.idleworld.online/*
 // @grant        Notification
@@ -13,9 +13,12 @@
 
 (function() {
     'use strict';
+    const IV_MAX = 192;
+    // Ajusta aqui los multis de cada rareza si el juego los cambia
+    const MULT_RAREZA = { 'comun': 'x1.0', 'comun ': '', 'uncommon': 'x1.2', 'poco comun': 'x1.2', 'rare': 'x1.4', 'raro': 'x1.4', 'epic': 'x1.6', 'epico': 'x1.6', 'legendary': 'x1.8', 'legendario': 'x1.8', 'mythic': 'x2.0', 'mitico': 'x2.0', 'shiny': 'x2.0', 'brillante': 'x2.0', 'variocolor': 'x2.0' };
     let UMBRAL = parseInt(localStorage.getItem('piw_iv_umbral') || '160', 10) || 160;
     let SONIDO_ON = true;
-    let SOLO_CAPTURAS = localStorage.getItem('piw_iv_solo') !== '0'; // default true
+    let MI_NOMBRE = (localStorage.getItem('piw_iv_nombre') || '').trim();
     const yaAvisados = new Set();
 
     function crearPanel() {
@@ -24,7 +27,7 @@
         const d = document.createElement('div');
         d.id = 'piw-iv-panel';
         d.style.cssText = 'position:fixed;bottom:10px;right:10px;z-index:999999;background:#111;color:#fff;padding:8px 10px;border:2px solid gold;border-radius:10px;font-family:sans-serif;font-size:12px;pointer-events:auto;';
-        d.innerHTML = '<b style="color:gold">⚡ IV Alert PIW</b><br>Umbral (0-186): <input id="piw-umbral" type="number" min="0" max="186" step="1" value="' + UMBRAL + '" style="width:65px;background:#222;color:#fff;border:1px solid #555;pointer-events:auto;user-select:text;"> <label><input id="piw-sonido" type="checkbox" checked> sonido</label><br><label title="Si se desmarca, avisa tambien al ver salvajes/escapados"><input id="piw-solo" type="checkbox"' + (SOLO_CAPTURAS ? ' checked' : '') + '> solo capturas</label><br><button id="piw-test" style="margin-top:4px">Probar sonido</button><div id="piw-status" style="margin-top:4px;color:#8f8"></div>';
+        d.innerHTML = '<b style="color:gold">⚡ IV Alert PIW</b><br>Umbral (0-192): <input id="piw-umbral" type="number" min="0" max="192" step="1" value="' + UMBRAL + '" style="width:65px;background:#222;color:#fff;border:1px solid #555;pointer-events:auto;user-select:text;"> <label><input id="piw-sonido" type="checkbox" checked> sonido</label><br>Mi entrenador: <input id="piw-nombre" type="text" placeholder="opcional" value="' + MI_NOMBRE.replace(/"/g,'&quot;') + '" style="width:90px;background:#222;color:#fff;border:1px solid #555;"><br><button id="piw-test" style="margin-top:4px">Probar sonido</button><div id="piw-status" style="margin-top:4px;color:#8f8"></div>';
         document.body.appendChild(d);
         const inp = document.getElementById('piw-umbral');
         // Evita que la pagina capture tus teclas/clicks dentro del panel
@@ -39,7 +42,7 @@
             if (raw === '') return; // deja borrar para escribir nuevo numero
             let v = parseInt(raw, 10);
             if (isNaN(v)) return;
-            v = Math.max(0, Math.min(186, v));
+            v = Math.max(0, Math.min(192, v));
             UMBRAL = v;
             localStorage.setItem('piw_iv_umbral', String(v));
             const st = document.getElementById('piw-status');
@@ -48,7 +51,13 @@
         inp.addEventListener('input', guardar);
         inp.addEventListener('change', guardar);
         document.getElementById('piw-sonido').onchange = e => { SONIDO_ON = e.target.checked; };
-        document.getElementById('piw-solo').onchange = e => { SOLO_CAPTURAS = e.target.checked; localStorage.setItem('piw_iv_solo', SOLO_CAPTURAS ? '1' : '0'); };
+        const inpNom = document.getElementById('piw-nombre');
+        ['click','mousedown','keydown','keyup','keypress','input','focus'].forEach(ev =>
+            inpNom.addEventListener(ev, e => e.stopPropagation(), true)
+        );
+        const guardarNom = () => { MI_NOMBRE = inpNom.value.trim(); localStorage.setItem('piw_iv_nombre', MI_NOMBRE); };
+        inpNom.addEventListener('input', guardarNom);
+        inpNom.addEventListener('change', guardarNom);
         document.getElementById('piw-test').onclick = (e) => { e.stopPropagation(); asegurarAudio(); sonar(true); };
     }
 
@@ -83,30 +92,42 @@
         if (st) st.textContent = t;
     }
 
-    function avisar(poke, total, origen) {
-        const key = poke + '|' + total + '|' + (origen || '');
+    function avisar(poke, total, extra) {
+        extra = extra || {};
+        const key = poke + '|' + total + '|' + (extra.ivs || '') + '|' + (extra.calidad || '');
         if (yaAvisados.has(key)) return;
         yaAvisados.add(key);
         sonar();
+        const pct = Math.round(total / IV_MAX * 100);
+        const linea = poke + ' — IV: ' + total + '/' + IV_MAX + ' (' + pct + '%)'
+            + (extra.calidad ? ' | ' + extra.calidad : '')
+            + (extra.ivs ? ' | ' + extra.ivs : '');
         if (typeof Notification !== 'undefined') {
             if (Notification.permission === 'default') Notification.requestPermission();
             if (Notification.permission === 'granted') {
-                try { new Notification('CAPTURA IV ALTA: ' + poke + ' (' + total + ')', { body: 'IV total ' + total + ' >= ' + UMBRAL }); } catch(e){}
+                try { new Notification('CAPTURA: ' + poke + ' (' + total + ')', { body: linea }); } catch(e){}
             }
         }
         const b = document.createElement('div');
         b.style.cssText = 'position:fixed;top:15%;left:50%;transform:translateX(-50%);z-index:1000000;background:linear-gradient(180deg,#ffdf00,#ff8c00);color:#000;font-size:22px;font-weight:bold;padding:16px 28px;border:4px solid #fff;border-radius:16px;box-shadow:0 0 30px gold;text-align:center;';
-        b.textContent = '🎉 CAPTURA IV BUENA 🎉 ' + poke + ' — IV: ' + total;
+        b.textContent = '🎉 CAPTURA 🎉 ' + linea;
         b.onclick = () => b.remove();
         document.body.appendChild(b);
-        setTimeout(() => b.remove(), 8000);
-        status('Ultima captura: ' + poke + ' ' + total + ' (umbral ' + UMBRAL + ')');
+        setTimeout(() => b.remove(), 9000);
+        status(linea);
     }
 
-    // Solo consideramos "captura" si el texto cercano indica exito.
-    // Asi ignoramos salvajes vistos, escapes y huidas.
-    const RE_CAPTURA = /(captur|atrap|caught|captured|you got|you caught|congrat|felicidades|obtuv|conseguido|adicionado|pego|successfully caught)/i;
-    const RE_ESCAPE = /(escap|fled|flee|ran away|huy[oó]|fallaste|failed|broke free|se solt)/i;
+    // SOLO mis capturas: exige 1ra persona (you/tu/yo/mi) y excluye feed global/chat de otros.
+    const RE_CAPTURA = /(you caught|you got|capturaste|atrapaste|lo captur|la captur|mi pokemon|tu captura|voce capturou|successfully caught)/i;
+    const RE_MIA = /\b(you|your|yo|mi\b|mis|t[úu]|tu\b|contigo|voce|você|meu|minha)\b/i;
+    const RE_FEED = /(global|world feed|recent captures|ultimas capturas|chat geral|chat global|ranking|leaderboard|\%s caught|ha capturado un)/i;
+
+    function enZonaAjena(el) {
+        try {
+            const z = el.closest && el.closest('[id*=chat],[class*=chat],[id*=feed],[class*=feed],[id*=global],[class*=global],[id*=ranking],[class*=ranking],[id*=leaderboard],[class*=leaderboard],[id*=world],[class*=world-feed]');
+            return !!z;
+        } catch(e){ return false; }
+    }
 
     function contextoTexto(el) {
         let node = el, txt = '';
@@ -114,11 +135,21 @@
             for (let i = 0; i < 5 && node; i++) {
                 const t = (node.innerText || '').slice(0, 2000);
                 txt += '\n' + t;
-                if (RE_CAPTURA.test(t)) return { captura: true, texto: txt };
                 node = node.parentElement;
             }
         } catch(e){}
-        return { captura: false, texto: txt };
+        return txt;
+    }
+
+    function esMiCaptura(el, textoCompleto) {
+        if (enZonaAjena(el)) return false;
+        if (RE_FEED.test(textoCompleto)) return false;
+        if (!RE_CAPTURA.test(textoCompleto)) return false;
+        if (MI_NOMBRE && textoCompleto.toLowerCase().includes(MI_NOMBRE.toLowerCase())) return true;
+        // Sin nombre configurado: exige marca de 1ra persona para no tragar capturas de otros
+        if (RE_MIA.test(textoCompleto)) return true;
+        // Si el texto dice "X ha capturado" con otro nombre y no hay marca mia, es ajeno
+        return false;
     }
 
     function extraerIVTotal(texto) {
@@ -126,16 +157,50 @@
         let m = texto.match(/IV[^0-9]{0,10}(\d{2,3})/i);
         if (m) {
             const v = parseInt(m[1], 10);
-            if (v >= 0 && v <= 186) return { total: v };
+            if (v >= 0 && v <= IV_MAX) return { total: v, ivs: extraerIVs(texto) };
         }
         m = texto.match(/(\d{1,2})\s*\/\s*(\d{1,2})\s*\/\s*(\d{1,2})\s*\/\s*(\d{1,2})\s*\/\s*(\d{1,2})\s*\/\s*(\d{1,2})/);
         if (m) {
             const vals = m.slice(1).map(Number);
             if (vals.every(v => v >= 0 && v <= 31)) {
-                return { total: vals.reduce((a,b)=>a+b,0) };
+                return { total: vals.reduce((a,b)=>a+b,0), ivs: vals.join('/') };
             }
         }
         return null;
+    }
+
+    function extraerIVs(texto) {
+        const m = texto.match(/(\d{1,2}\s*\/\s*\d{1,2}\s*\/\s*\d{1,2}\s*\/\s*\d{1,2}\s*\/\s*\d{1,2}\s*\/\s*\d{1,2})/);
+        return m ? m[1].replace(/\s/g,'') : '';
+    }
+
+    function multDe(texto) {
+        if (!texto) return '';
+        // acepta 1.4x, 1,4x, x1.4, Mult 1.62x, (1.62x)
+        let m = texto.match(/x\s*(\d+[.,]\d+)/i) || texto.match(/(\d+[.,]\d+)\s*x/i);
+        if (!m) return '';
+        return 'x' + m[1].replace(',', '.');
+    }
+
+    function extraerCalidad(texto) {
+        if (!texto) return '';
+        const exacto = multDe(texto); // multi REAL de ese pokemon, manda sobre la tabla
+        let m = texto.match(/(calidad|quality|tier|rarity|rareza)\s*[:\-]?\s*([A-Za-z+\- ]{2,20})/i);
+        if (m) {
+            const rare = m[2].trim().slice(0, 20);
+            const tabla = MULT_RAREZA[rare.toLowerCase()] || '';
+            const mult = exacto || tabla;
+            return 'Rareza: ' + rare + (mult ? ' ' + mult : '');
+        }
+        m = texto.match(/\b(Common|Uncommon|Rare|Epic|Legendary|Mythic|Shiny|Perfect|Outstanding|Amazing|Com[uú]n|Poco com[uú]n|Raro|Épico|Epico|Legendario|M[ií]tico|Brillante|Variocolor)\b/i);
+        if (m) {
+            const rare = m[1];
+            const tabla = MULT_RAREZA[rare.toLowerCase()] || '';
+            const mult = exacto || tabla;
+            return 'Rareza: ' + rare + (mult ? ' ' + mult : '');
+        }
+        if (exacto) return 'Rareza: ' + exacto;
+        return '';
     }
 
     function esPanel(el) {
@@ -155,15 +220,10 @@
         if (el.innerText.length > 2000) return;
         const r = extraerIVTotal(el.innerText);
         if (!r || r.total < UMBRAL) return;
+        const full = contextoTexto(el);
+        if (!esMiCaptura(el, full + '\n' + el.innerText)) return; // silencioso: nada de "visto no captura"
         const poke = nombreCercano(el);
-        if (!SOLO_CAPTURAS) { avisar(poke, r.total, 'ver'); return; }
-        const ctx = contextoTexto(el);
-        if (RE_ESCAPE.test(el.innerText) && !RE_CAPTURA.test(el.innerText)) {
-            status('Visto (no captura): ' + poke + ' ' + r.total + ' — escapó/huida');
-            return;
-        }
-        if (ctx.captura) avisar(poke, r.total, 'dom');
-        else status('Visto (no captura): ' + poke + ' ' + r.total + ' — esperando mensaje de captura');
+        avisar(poke, r.total, { ivs: r.ivs || extraerIVs(full), calidad: extraerCalidad(full + ' ' + el.innerText) });
     }
 
     const obs = new MutationObserver(muts => {
@@ -181,28 +241,36 @@
             if (!/iv/i.test(s)) return;
             const m = s.match(/"(total_?iv|iv_?total|ivSum)"\s*:\s*(\d{2,3})/i);
             let total = m ? parseInt(m[2], 10) : null;
+            let ivs = '';
             if (total == null) {
                 const m2 = s.match(/"ivs?"\s*:\s*(\[[^\]]+\]|\{[^}]+\})/i);
                 if (m2) {
                     const nums = m2[1].match(/\d+/g)?.map(Number) || [];
-                    if (nums.length >= 6) total = nums.slice(0,6).reduce((a,b)=>a+b,0);
+                    if (nums.length >= 6) { total = nums.slice(0,6).reduce((a,b)=>a+b,0); ivs = nums.slice(0,6).join('/'); }
                 }
             }
             if (total == null || total < UMBRAL) return;
-            const n = s.match(/"(name|pokemon|species|nickname)"\s*:\s*"([^"]+)"/i);
-            const poke = n ? n[2] : 'Pokemon';
-            if (!SOLO_CAPTURAS) { avisar(poke, total, 'json'); return; }
+            // Solo captura propia con exito: exige URL de catch o flag de exito, y si hay owner/trainer debe ser mio
             const u = String(url || '').toLowerCase();
             const urlEsCaptura = /(captur|catch)/i.test(u);
             const jsonDiceExito = /"(success|caught|captured|iscaught|result|status)"\s*:\s*(true|"success"|"caught"|"captured"|"ok")/i.test(s)
-                || /(successfully caught|you caught|capturad|atrapad)/i.test(s);
-            const jsonDiceFallo = /"(success|caught|captured)"\s*:\s*false/i.test(s) || /(fled|escaped|broke free|escap)/i.test(s);
-            if (jsonDiceFallo && !jsonDiceExito) {
-                status('Visto (no captura): ' + poke + ' ' + total + ' — JSON sin éxito');
-                return;
+                || /(successfully caught|you caught|capturaste|atrapaste)/i.test(s);
+            if (!urlEsCaptura && !jsonDiceExito) return; // silencioso
+            if (MI_NOMBRE) {
+                const low = s.toLowerCase();
+                const mOwner = s.match(/"(owner|trainer|username|player|caught_by|caughtBy)"\s*:\s*"([^"]+)"/i);
+                if (mOwner && !mOwner[2].toLowerCase().includes(MI_NOMBRE.toLowerCase()) && !low.includes(MI_NOMBRE.toLowerCase())) return;
             }
-            if (urlEsCaptura || jsonDiceExito) avisar(poke, total, 'json-captura');
-            else status('Visto (no captura): ' + poke + ' ' + total + ' — JSON sin confirmar captura (' + u.slice(0,60) + ')');
+            const n = s.match(/"(name|pokemon|species|nickname)"\s*:\s*"([^"]+)"/i);
+            const poke = n ? n[2] : 'Pokemon';
+            const q = s.match(/"(quality|rarity|tier|rareza)"\s*:\s*"([^"]+)"/i);
+            const multJ = s.match(/"(mult|multiplier|x|mult_x|rate)"\s*:\s*"?(\d+[.,]\d+)"?/i);
+            let calidadJ = '';
+            const exactoJ = multJ ? 'x' + multJ[2].replace(',', '.') : '';
+            if (q) {
+                calidadJ = 'Rareza: ' + q[2] + (exactoJ ? ' ' + exactoJ : '');
+            } else if (exactoJ) calidadJ = 'Rareza: ' + exactoJ;
+            avisar(poke, total, { ivs: ivs, calidad: calidadJ });
         } catch(e){}
     }
     const origFetch = window.fetch;
