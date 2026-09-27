@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Poke Idle World - Alerta IV Alto
 // @namespace    https://github.com/es6te/
-// @version      1.6
-// @description  Solo MIS capturas: nombre + IV/192 + rareza con multi EXACTO
+// @version      1.8
+// @description  Solo MIS capturas: cualquier umbral 0-192 + IV/192 + rareza exacta
 // @author       azteca1223
 // @match        https://poke.idleworld.online/*
 // @grant        Notification
@@ -16,8 +16,15 @@
     const IV_MAX = 192;
     // Ajusta aqui los multis de cada rareza si el juego los cambia
     const MULT_RAREZA = { 'comun': 'x1.0', 'comun ': '', 'uncommon': 'x1.2', 'poco comun': 'x1.2', 'rare': 'x1.4', 'raro': 'x1.4', 'epic': 'x1.6', 'epico': 'x1.6', 'legendary': 'x1.8', 'legendario': 'x1.8', 'mythic': 'x2.0', 'mitico': 'x2.0', 'shiny': 'x2.0', 'brillante': 'x2.0', 'variocolor': 'x2.0' };
-    let UMBRAL = parseInt(localStorage.getItem('piw_iv_umbral') || '160', 10) || 160;
+    function leerUmbral() {
+        const s = localStorage.getItem('piw_iv_umbral');
+        if (s === null || s === '') return 160;
+        const v = parseInt(s, 10);
+        return isNaN(v) ? 160 : Math.max(0, Math.min(IV_MAX, v));
+    }
+    let UMBRAL = leerUmbral();
     let SONIDO_ON = true;
+    let DEBUG = localStorage.getItem('piw_iv_debug') !== '0'; // default ON para calibrar 120
     let MI_NOMBRE = (localStorage.getItem('piw_iv_nombre') || '').trim();
     const yaAvisados = new Set();
 
@@ -27,7 +34,7 @@
         const d = document.createElement('div');
         d.id = 'piw-iv-panel';
         d.style.cssText = 'position:fixed;bottom:10px;right:10px;z-index:999999;background:#111;color:#fff;padding:8px 10px;border:2px solid gold;border-radius:10px;font-family:sans-serif;font-size:12px;pointer-events:auto;';
-        d.innerHTML = '<b style="color:gold">⚡ IV Alert PIW</b><br>Umbral (0-192): <input id="piw-umbral" type="number" min="0" max="192" step="1" value="' + UMBRAL + '" style="width:65px;background:#222;color:#fff;border:1px solid #555;pointer-events:auto;user-select:text;"> <label><input id="piw-sonido" type="checkbox" checked> sonido</label><br>Mi entrenador: <input id="piw-nombre" type="text" placeholder="opcional" value="' + MI_NOMBRE.replace(/"/g,'&quot;') + '" style="width:90px;background:#222;color:#fff;border:1px solid #555;"><br><button id="piw-test" style="margin-top:4px">Probar sonido</button><div id="piw-status" style="margin-top:4px;color:#8f8"></div>';
+        d.innerHTML = '<b style="color:gold">⚡ IV Alert PIW</b><br>Umbral (0-192): <input id="piw-umbral" type="number" min="0" max="192" step="1" value="' + UMBRAL + '" style="width:70px;background:#222;color:#fff;border:1px solid #555;pointer-events:auto;user-select:text;"> <button id="piw-set" style="margin-left:4px">OK</button> <label><input id="piw-sonido" type="checkbox" checked> sonido</label> <label><input id="piw-debug" type="checkbox"' + (DEBUG ? ' checked' : '') + '> debug</label><br>Mi entrenador: <input id="piw-nombre" type="text" placeholder="opcional" value="' + MI_NOMBRE.replace(/"/g,'&quot;') + '" style="width:90px;background:#222;color:#fff;border:1px solid #555;"><br><button id="piw-test" style="margin-top:4px">Probar sonido</button> <button id="piw-testalert" style="margin-top:4px">Probar alerta</button><div id="piw-status" style="margin-top:4px;color:#8f8"></div>';
         document.body.appendChild(d);
         const inp = document.getElementById('piw-umbral');
         // Evita que la pagina capture tus teclas/clicks dentro del panel
@@ -37,20 +44,26 @@
         ['click','mousedown'].forEach(ev =>
             d.addEventListener(ev, e => e.stopPropagation(), false)
         );
-        const guardar = () => {
-            const raw = inp.value.trim();
-            if (raw === '') return; // deja borrar para escribir nuevo numero
-            let v = parseInt(raw, 10);
-            if (isNaN(v)) return;
-            v = Math.max(0, Math.min(192, v));
+        const guardar = (mostrar) => {
+            const raw = String(inp.value).trim().replace(',', '.');
+            if (raw === '') { if (mostrar) status('Escribe un numero 0-' + IV_MAX + ' y pulsa OK/Enter'); return false; }
+            let v = Number(raw);
+            if (!isFinite(v)) { if (mostrar) status('Numero invalido: ' + inp.value); return false; }
+            v = Math.floor(v);
+            v = Math.max(0, Math.min(IV_MAX, v));
             UMBRAL = v;
+            inp.value = String(v);
             localStorage.setItem('piw_iv_umbral', String(v));
-            const st = document.getElementById('piw-status');
-            if (st) st.textContent = 'Umbral: ' + v;
+            status('Umbral activo: ' + v + '/' + IV_MAX);
+            return true;
         };
-        inp.addEventListener('input', guardar);
-        inp.addEventListener('change', guardar);
+        // NO aplicar mientras escribes (evita que "1" dispare todo al querer "120").
+        // Solo aplica con OK, Enter o al salir del campo.
+        inp.addEventListener('change', () => guardar(true));
+        inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { guardar(true); inp.blur(); } });
+        document.getElementById('piw-set').onclick = (e) => { e.stopPropagation(); guardar(true); inp.blur(); };
         document.getElementById('piw-sonido').onchange = e => { SONIDO_ON = e.target.checked; };
+        document.getElementById('piw-debug').onchange = e => { DEBUG = e.target.checked; localStorage.setItem('piw_iv_debug', DEBUG ? '1' : '0'); status('Debug ' + (DEBUG ? 'ON' : 'OFF') + ' | Umbral ' + UMBRAL + '/' + IV_MAX); };
         const inpNom = document.getElementById('piw-nombre');
         ['click','mousedown','keydown','keyup','keypress','input','focus'].forEach(ev =>
             inpNom.addEventListener(ev, e => e.stopPropagation(), true)
@@ -58,7 +71,8 @@
         const guardarNom = () => { MI_NOMBRE = inpNom.value.trim(); localStorage.setItem('piw_iv_nombre', MI_NOMBRE); };
         inpNom.addEventListener('input', guardarNom);
         inpNom.addEventListener('change', guardarNom);
-        document.getElementById('piw-test').onclick = (e) => { e.stopPropagation(); asegurarAudio(); sonar(true); };
+        document.getElementById('piw-test').onclick = (e) => { e.stopPropagation(); asegurarAudio(); sonar(true); e.target.blur(); };
+        document.getElementById('piw-testalert').onclick = (e) => { e.stopPropagation(); avisar('Test', UMBRAL, { ivs: '', calidad: 'Rareza: test' }); e.target.blur(); };
     }
 
     let ctx = null;
@@ -69,6 +83,8 @@
         } catch(e){}
     }
     document.addEventListener('click', asegurarAudio, false);
+    document.addEventListener('pointerdown', asegurarAudio, false);
+    document.addEventListener('keydown', asegurarAudio, false);
 
     function sonar(forzado = false) {
         if (!SONIDO_ON && !forzado) return;
@@ -153,16 +169,20 @@
     }
 
     function extraerIVTotal(texto) {
-        if (!texto || !/iv/i.test(texto)) return null;
-        let m = texto.match(/IV[^0-9]{0,10}(\d{2,3})/i);
-        if (m) {
-            const v = parseInt(m[1], 10);
-            if (v >= 0 && v <= IV_MAX) return { total: v, ivs: extraerIVs(texto) };
+        if (!texto) return null;
+        // 1) "IV 175" / "IV: 175" aunque no haya breakdown
+        if (/iv/i.test(texto)) {
+            let m = texto.match(/IV[^0-9]{0,10}(\d{2,3})/i);
+            if (m) {
+                const v = parseInt(m[1], 10);
+                if (v >= 0 && v <= IV_MAX) return { total: v, ivs: extraerIVs(texto) };
+            }
         }
-        m = texto.match(/(\d{1,2})\s*\/\s*(\d{1,2})\s*\/\s*(\d{1,2})\s*\/\s*(\d{1,2})\s*\/\s*(\d{1,2})\s*\/\s*(\d{1,2})/);
+        // 2) breakdown 31/28/... aunque NO diga "IV" (muchos paneles solo muestran numeros)
+        let m = texto.match(/(\d{1,2})\s*\/\s*(\d{1,2})\s*\/\s*(\d{1,2})\s*\/\s*(\d{1,2})\s*\/\s*(\d{1,2})\s*\/\s*(\d{1,2})/);
         if (m) {
             const vals = m.slice(1).map(Number);
-            if (vals.every(v => v >= 0 && v <= 31)) {
+            if (vals.every(v => v >= 0 && v <= 32)) {
                 return { total: vals.reduce((a,b)=>a+b,0), ivs: vals.join('/') };
             }
         }
@@ -219,9 +239,16 @@
         if (esPanel(el)) return;
         if (el.innerText.length > 2000) return;
         const r = extraerIVTotal(el.innerText);
-        if (!r || r.total < UMBRAL) return;
+        if (!r) return;
+        if (r.total < UMBRAL) {
+            if (DEBUG) status('Visto IV ' + r.total + ' < umbral ' + UMBRAL);
+            return;
+        }
         const full = contextoTexto(el);
-        if (!esMiCaptura(el, full + '\n' + el.innerText)) return; // silencioso: nada de "visto no captura"
+        if (!esMiCaptura(el, full + '\n' + el.innerText)) {
+            if (DEBUG) status('IV ' + r.total + ' sin frase MIA (¿otro jugador o falta "you caught"?). Umbral ' + UMBRAL);
+            return;
+        }
         const poke = nombreCercano(el);
         avisar(poke, r.total, { ivs: r.ivs || extraerIVs(full), calidad: extraerCalidad(full + ' ' + el.innerText) });
     }
@@ -238,8 +265,11 @@
     function revisarJSON(obj, url) {
         try {
             const s = JSON.stringify(obj);
-            if (!/iv/i.test(s)) return;
-            const m = s.match(/"(total_?iv|iv_?total|ivSum)"\s*:\s*(\d{2,3})/i);
+            const u = String(url || '').toLowerCase();
+            const urlEsCaptura = /(captur|catch)/i.test(u);
+            // Acepta IV aunque la key no se llame "iv" si la URL es de captura
+            if (!/iv/i.test(s) && !urlEsCaptura) return;
+            const m = s.match(/"(total_?iv|iv_?total|ivSum|total)"\s*:\s*(\d{2,3})/i);
             let total = m ? parseInt(m[2], 10) : null;
             let ivs = '';
             if (total == null) {
@@ -249,13 +279,21 @@
                     if (nums.length >= 6) { total = nums.slice(0,6).reduce((a,b)=>a+b,0); ivs = nums.slice(0,6).join('/'); }
                 }
             }
-            if (total == null || total < UMBRAL) return;
+            if (total == null) {
+                if (DEBUG && urlEsCaptura) status('JSON captura sin total IV: ' + u.slice(-60));
+                return;
+            }
+            if (total < UMBRAL) {
+                if (DEBUG && urlEsCaptura) status('JSON IV ' + total + ' < umbral ' + UMBRAL);
+                return;
+            }
             // Solo captura propia con exito: exige URL de catch o flag de exito, y si hay owner/trainer debe ser mio
-            const u = String(url || '').toLowerCase();
-            const urlEsCaptura = /(captur|catch)/i.test(u);
             const jsonDiceExito = /"(success|caught|captured|iscaught|result|status)"\s*:\s*(true|"success"|"caught"|"captured"|"ok")/i.test(s)
                 || /(successfully caught|you caught|capturaste|atrapaste)/i.test(s);
-            if (!urlEsCaptura && !jsonDiceExito) return; // silencioso
+            if (!urlEsCaptura && !jsonDiceExito) {
+                if (DEBUG) status('JSON IV ' + total + ' sin confirmar captura: ' + u.slice(-60));
+                return;
+            }
             if (MI_NOMBRE) {
                 const low = s.toLowerCase();
                 const mOwner = s.match(/"(owner|trainer|username|player|caught_by|caughtBy)"\s*:\s*"([^"]+)"/i);
@@ -300,7 +338,8 @@
     setInterval(() => {
         document.querySelectorAll('div, span, p').forEach(el => {
             if (el.closest && el.closest('#piw-iv-panel')) return;
-            if (/iv/i.test(el.childNodes[0]?.textContent || '')) chequearNodo(el);
+            const first = el.childNodes[0]?.textContent || '';
+            if (/iv/i.test(first) || /\d{1,2}\s*\/\s*\d{1,2}\s*\//.test(first)) chequearNodo(el);
         });
     }, 2000);
 
@@ -308,6 +347,7 @@
         crearPanel();
         obs.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
         if (typeof Notification !== 'undefined' && Notification.permission === 'default') Notification.requestPermission();
+        status('Activo | Umbral ' + UMBRAL + '/' + IV_MAX + ' | debug ' + (DEBUG ? 'ON' : 'OFF'));
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
     else init();
