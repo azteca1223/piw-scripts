@@ -15,6 +15,13 @@ jobs:
       id-token: write
       actions: read
     steps:
+      - name: Debug secret presence (temporary)
+        run: |
+          if [ -z "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}" ]; then
+            echo "OAUTH_SECRET_EMPTY=true"
+          else
+            echo "OAUTH_SECRET_EMPTY=false"
+          fi
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
